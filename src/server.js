@@ -14,7 +14,7 @@ const INITIAL_PORT = Number(process.env.PORT) || 5000;
 const listenWithFallback = (port) =>
   new Promise((resolve, reject) => {
     const server = app.listen(port, () => {
-      console.log(`Backend running on port ${port}`);
+      console.log(`Backend running on port ${port} (GET /api/health, GET /ping for uptime checks)`);
       resolve(server);
     });
 
