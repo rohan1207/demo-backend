@@ -35,6 +35,19 @@ const orderSchema = new mongoose.Schema(
       postalCode: String,
       country: { type: String, default: 'India' },
     },
+    /** CatalystSoft / Click2Pick (CustomerRestAPI) */
+    logistics: {
+      awb: { type: String, default: '' },
+      carrierOrderNumber: { type: String, default: '' },
+      bookingStatus: {
+        type: String,
+        enum: ['none', 'pending', 'booked', 'failed', 'cancelled'],
+        default: 'none',
+      },
+      lastError: { type: String, default: '' },
+      lastTrackSummary: { type: mongoose.Schema.Types.Mixed },
+      lastSyncedAt: { type: Date },
+    },
   },
   { timestamps: true }
 );

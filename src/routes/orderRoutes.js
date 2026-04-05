@@ -13,6 +13,7 @@ import {
   verifyRazorpayPayment,
   updateOrderStatus,
 } from '../controllers/orderController.js';
+import { getMyOrderTracking } from '../controllers/logisticsController.js';
 import { adminOnly, protect } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -25,6 +26,8 @@ router.get('/my', protect, getMyOrders);
 router.get('/returns/my', protect, getMyReturnRequests);
 router.post('/returns/upload', protect, upload.single('image'), uploadReturnImage);
 router.post('/returns', protect, createReturnRequest);
+
+router.get('/:id/tracking', protect, getMyOrderTracking);
 
 router.get('/admin/all', protect, adminOnly, adminGetOrders);
 router.patch('/admin/:id/status', protect, adminOnly, updateOrderStatus);
