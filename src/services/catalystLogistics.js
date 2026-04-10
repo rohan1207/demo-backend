@@ -16,12 +16,17 @@ export function isLogisticsConfigured() {
   );
 }
 
+function logisticsTimeoutMs() {
+  const n = Number(process.env.LOGISTICS_HTTP_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 60000;
+}
+
 function client() {
   const b = baseUrl();
   if (!b) throw new Error('LOGISTICS_API_BASE_URL is not set');
   return axios.create({
     baseURL: b,
-    timeout: 60000,
+    timeout: logisticsTimeoutMs(),
     headers: {
       'Content-Type': 'application/json',
       'X-APPKEY': process.env.LOGISTICS_X_APP_KEY || '',
@@ -110,36 +115,175 @@ export async function cancelOrder(awb, cancelReason) {
 
 export async function getPincodeTracking(pincode) {
   const c = client();
-  const res = await c.post(
-    '/GetPincodeTracking',
-    {},
-    {
-      params: { Pincode: String(pincode) },
-    }
-  );
+  const params = { Pincode: String(pincode) };
+  let res = await c.get('/GetPincodeTracking', { params });
+  if (res.status === 405) {
+    res = await c.post('/GetPincodeTracking', {}, { params });
+  }
   return { status: res.status, data: res.data };
 }
 
 export async function getStickerSize(syncDateTime = '01/01/2000 00:01') {
   const c = client();
-  const res = await c.post('/GetStickerSize', null, {
-    params: {
-      CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
-      SyncDateTime: syncDateTime,
-    },
-  });
+  const params = {
+    CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
+    SyncDateTime: syncDateTime,
+  };
+  let res = await c.get('/GetStickerSize', { params });
+  if (res.status === 405) {
+    res = await c.post('/GetStickerSize', null, { params });
+  }
   return { status: res.status, data: res.data };
+}
+
+function bufferLooksLikePdf(buf) {
+  return (
+    buf.length >= 4 &&
+    buf[0] === 0x25 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x44 &&
+    buf[3] === 0x46
+  );
+}
+
+function parseStickerJsonFromBuffer(raw) {
+  const t = raw
+    .toString('utf8')
+    .replace(/^\uFEFF/, '')
+    .trim();
+  if (!t || (t[0] !== '{' && t[0] !== '[')) return null;
+  try {
+    return JSON.parse(t);
+  } catch {
+    return null;
+  }
+}
+
+function networkErrorHint(code, message) {
+  if (code === 'ETIMEDOUT' || code === 'ECONNABORTED') {
+    return 'Connection to the carrier timed out. Try another network/VPN, allow outbound HTTPS to Catalyst, or ask if their API is IP-restricted.';
+  }
+  if (code === 'ECONNREFUSED' || code === 'ENOTFOUND') {
+    return 'Could not reach the carrier host (DNS or firewall). Check internet and corporate proxy settings.';
+  }
+  return message || 'Network error talking to carrier.';
+}
+
+async function fetchPdfFromStickerUrl(filePath, carrierJson) {
+  const fetchPdf = async (url) =>
+    axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: logisticsTimeoutMs(),
+      validateStatus: () => true,
+      headers: {
+        'X-APPKEY': process.env.LOGISTICS_X_APP_KEY || '',
+      },
+    });
+
+  let pdfRes;
+  let pdfBuf;
+
+  try {
+    pdfRes = await fetchPdf(filePath);
+    pdfBuf = Buffer.from(pdfRes.data || []);
+  } catch (e) {
+    if (filePath.startsWith('http://')) {
+      const httpsUrl = `https://${filePath.slice('http://'.length)}`;
+      try {
+        pdfRes = await fetchPdf(httpsUrl);
+        pdfBuf = Buffer.from(pdfRes.data || []);
+      } catch (e2) {
+        const err = new Error(networkErrorHint(e2.code, e2.message));
+        err.cause = e2;
+        err.carrierStickerJson = carrierJson || { FilePath: filePath };
+        err.labelUrlTried = filePath;
+        throw err;
+      }
+    } else {
+      const err = new Error(networkErrorHint(e.code, e.message));
+      err.cause = e;
+      err.carrierStickerJson = carrierJson || { FilePath: filePath };
+      err.labelUrlTried = filePath;
+      throw err;
+    }
+  }
+
+  if (bufferLooksLikePdf(pdfBuf)) {
+    return pdfRes;
+  }
+
+  // HTTP already responded (e.g. 404 HTML) — do not retry HTTPS; many networks block :443 to Catalyst while :80 works.
+  if (filePath.startsWith('http://') && pdfRes && typeof pdfRes.status === 'number') {
+    const err = new Error(
+      `Label PDF not found at carrier (HTTP ${pdfRes.status}). In the test environment, the API often returns a label link but the PDF file is missing for demo AWBs — ask Catalyst or use a production AWB.`
+    );
+    err.carrierStickerJson = carrierJson || { FilePath: filePath };
+    err.labelUrlTried = filePath;
+    throw err;
+  }
+
+  const err = new Error(
+    `Label PDF not found at carrier (HTTP ${pdfRes?.status ?? '?' }). In the test environment, the label link often exists but the PDF is missing for demo AWBs — ask Catalyst or use a production AWB.`
+  );
+  err.carrierStickerJson = carrierJson || { FilePath: filePath };
+  err.labelUrlTried = filePath;
+  throw err;
+}
+
+/**
+ * UAT returns JSON { FilePath } then you download the PDF; raw PDF in-body is rare.
+ * UAT: use GET (POST returns “method not supported”). Live: fallback to POST if GET returns 405.
+ */
+async function resolveStickerBody(bodyBuffer, sourceHeaders, sourceStatus) {
+  const raw = Buffer.from(bodyBuffer || []);
+  if (bufferLooksLikePdf(raw)) {
+    return {
+      data: bodyBuffer,
+      headers: sourceHeaders,
+      status: sourceStatus >= 200 && sourceStatus < 300 ? sourceStatus : 200,
+    };
+  }
+
+  const j = parseStickerJsonFromBuffer(raw);
+  if (j) {
+    const path = j.FilePath || j.filePath;
+    if (path && typeof path === 'string') {
+      const pdfRes = await fetchPdfFromStickerUrl(path, j);
+      return { data: pdfRes.data, headers: pdfRes.headers, status: 200 };
+    }
+    const failMsg =
+      j.Message ||
+      j.message ||
+      j.ResponseStatus?.Message ||
+      (typeof j.ResponseStatus === 'object' ? j.ResponseStatus?.Message : null);
+    if (failMsg && String(failMsg).trim().toLowerCase() !== 'success') {
+      const err = new Error(String(failMsg));
+      err.carrierStickerJson = j;
+      throw err;
+    }
+  }
+
+  const err = new Error(
+    'Carrier did not return a PDF or a label FilePath for this AWB. Check sticker size name (use a value from GetStickerSize, e.g. PARCEL).'
+  );
+  err.carrierStickerPreview = raw.toString('utf8').slice(0, 500);
+  if (j) err.carrierStickerJson = j;
+  throw err;
 }
 
 export async function getStickerPrintBuffer(awb, stickerSizeName) {
   const c = client();
-  const res = await c.post('/GetStickerPrint', null, {
-    params: {
-      CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
-      AWB: String(awb),
-      StickerSizeName: String(stickerSizeName),
-    },
-    responseType: 'arraybuffer',
-  });
-  return { status: res.status, data: res.data, headers: res.headers };
+  const params = {
+    CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
+    AWB: String(awb),
+    StickerSizeName: String(stickerSizeName),
+  };
+  const req = { params, responseType: 'arraybuffer' };
+
+  let res = await c.get('/GetStickerPrint', req);
+  if (res.status === 405) {
+    res = await c.post('/GetStickerPrint', null, req);
+  }
+  const out = await resolveStickerBody(res.data, res.headers, res.status);
+  return { status: out.status, data: out.data, headers: out.headers };
 }

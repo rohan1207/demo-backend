@@ -181,23 +181,28 @@ export const adminStickerPdf = async (req, res) => {
     return res.status(400).json({ message: 'awb and stickerSizeName query params required' });
   }
   try {
-    const { status, data, headers } = await getStickerPrintBuffer(awb, stickerSizeName);
-    const ct = headers['content-type'] || '';
-    if (ct.includes('application/pdf') || (data && data.byteLength > 0 && data[0] === 0x25)) {
+    const { data, headers } = await getStickerPrintBuffer(awb, stickerSizeName);
+    const buf = Buffer.from(data || []);
+    const isPdf =
+      buf.length >= 4 &&
+      buf[0] === 0x25 &&
+      buf[1] === 0x50 &&
+      buf[2] === 0x44 &&
+      buf[3] === 0x46;
+    const ct = (headers && headers['content-type']) || '';
+    if (isPdf || ct.includes('application/pdf')) {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="awb-${awb}.pdf"`);
-      return res.send(Buffer.from(data));
+      return res.send(buf);
     }
-    let jsonText = '';
-    try {
-      jsonText = Buffer.from(data).toString('utf8');
-      const parsed = JSON.parse(jsonText);
-      return res.status(502).json({ message: 'Carrier returned non-PDF', data: parsed });
-    } catch {
-      return res.status(502).json({ message: 'Carrier returned non-PDF', preview: jsonText.slice(0, 200) });
-    }
+    return res.status(502).json({
+      message: 'Expected PDF bytes from logistics service — please retry or contact support.',
+      preview: buf.toString('utf8').slice(0, 300),
+    });
   } catch (e) {
-    return res.status(502).json({ message: e.message || 'Sticker print failed' });
+    const body = { message: e.message || 'Sticker print failed' };
+    if (e.carrierStickerJson) body.carrier = e.carrierStickerJson;
+    return res.status(502).json(body);
   }
 };
 
