@@ -4,7 +4,10 @@ import ReturnRequest from '../models/ReturnRequest.js';
 import User from '../models/User.js';
 import cloudinary from '../config/cloudinary.js';
 import { getRazorpayClient } from '../config/razorpay.js';
+import { sendOrderConfirmationMail, sendOrderStatusMail } from '../services/mail/mailService.js';
 import crypto from 'crypto';
+
+const ORDER_STATUSES = ['Placed', 'Confirmed', 'Packed', 'Shipped', 'Delivered', 'Cancelled'];
 
 export const createRazorpayOrder = async (req, res) => {
   const razorpay = getRazorpayClient();
@@ -94,6 +97,7 @@ export const createOrder = async (req, res) => {
   }
 
   res.status(201).json(order);
+  void sendOrderConfirmationMail(order, req.user);
 };
 
 export const verifyRazorpayPayment = async (req, res) => {
@@ -127,13 +131,27 @@ export const adminGetOrders = async (req, res) => {
 };
 
 export const updateOrderStatus = async (req, res) => {
-  const order = await Order.findByIdAndUpdate(
-    req.params.id,
-    { status: req.body.status },
-    { new: true }
+  const { status } = req.body;
+  if (!ORDER_STATUSES.includes(status)) {
+    return res.status(400).json({ message: 'Invalid status' });
+  }
+
+  const existing = await Order.findById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Order not found' });
+
+  const previousStatus = existing.status;
+  if (previousStatus === status) {
+    const unchanged = await Order.findById(req.params.id).populate('user', 'name email');
+    return res.json(unchanged);
+  }
+
+  const order = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true }).populate(
+    'user',
+    'name email'
   );
-  if (!order) return res.status(404).json({ message: 'Order not found' });
+
   res.json(order);
+  void sendOrderStatusMail(order, previousStatus, status);
 };
 
 export const uploadReturnImage = async (req, res) => {

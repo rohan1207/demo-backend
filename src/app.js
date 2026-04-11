@@ -7,6 +7,7 @@ import authRoutes from './routes/authRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import productRoutes from './routes/productRoutes.js';
+import contactRoutes from './routes/contactRoutes.js';
 import { errorHandler, notFound } from './middleware/error.js';
 
 dotenv.config();
@@ -59,6 +60,7 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.get('/ping', (req, res) => res.status(200).type('text/plain').send('pong'));
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/contact', contactRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/admin', adminRoutes);
