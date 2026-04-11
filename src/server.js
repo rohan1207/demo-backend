@@ -11,6 +11,9 @@ dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
 
 const INITIAL_PORT = Number(process.env.PORT) || 5000;
 
+// Uptime Robot ping route
+app.get('/', (req, res) => res.send('pong'));
+
 const listenWithFallback = (port) =>
   new Promise((resolve, reject) => {
     const server = app.listen(port, () => {
