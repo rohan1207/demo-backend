@@ -3,8 +3,10 @@ import {
   logisticsStatus,
   adminBookOrder,
   adminRefreshTracking,
+  adminTrackByReference,
   adminCancelShipment,
   adminPincodeLookup,
+  adminCarrierMeta,
   adminStickerSizes,
   adminStickerPdf,
 } from '../controllers/logisticsController.js';
@@ -17,7 +19,9 @@ router.post('/book/:id', protect, adminOnly, adminBookOrder);
 router.get('/track/:id', protect, adminOnly, adminRefreshTracking);
 router.post('/cancel', protect, adminOnly, adminCancelShipment);
 router.post('/pincode', protect, adminOnly, adminPincodeLookup);
+router.get('/meta', protect, adminOnly, adminCarrierMeta);
 router.get('/sticker-sizes', protect, adminOnly, adminStickerSizes);
 router.get('/sticker.pdf', protect, adminOnly, adminStickerPdf);
+router.get('/track-by-reference', protect, adminOnly, adminTrackByReference);
 
 export default router;

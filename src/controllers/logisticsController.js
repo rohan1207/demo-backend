@@ -4,10 +4,16 @@ import {
   buildBookingPayloadFromOrder,
   postBooking,
   trackConsignment,
+  trackConsignmentByRef,
   cancelOrder,
   getPincodeTracking,
   getStickerSize,
   getStickerPrintBuffer,
+  getModeList,
+  getProductList,
+  getCountryList,
+  getKycList,
+  getBranchTracking,
 } from '../services/catalystLogistics.js';
 
 function extractAwb(data) {
@@ -30,6 +36,12 @@ function extractOrderNumber(data) {
   const d = data.Response ?? data.response ?? data;
   if (typeof d === 'string') return '';
   return String(d.OrderNumber ?? d.orderNumber ?? data.OrderNumber ?? '').trim();
+}
+
+function looksLikePlaceholderAwb(awb) {
+  const s = String(awb || '').trim();
+  if (!s) return false;
+  return /^1000{5,}$/.test(s) || /^0+$/.test(s);
 }
 
 export const logisticsStatus = async (req, res) => {
@@ -65,8 +77,22 @@ export const adminBookOrder = async (req, res) => {
     const { status, data } = await postBooking(body);
     const awb = extractAwb(data);
     const orderNum = extractOrderNumber(data);
+    console.info('[LOGISTICS] adminBookOrder carrier result', {
+      orderId: String(order._id),
+      carrierHttpStatus: status,
+      awb,
+      orderNumber: orderNum,
+      isTesting: body.IsTesting,
+    });
 
     if (status >= 200 && status < 300 && awb) {
+      if (looksLikePlaceholderAwb(awb)) {
+        console.warn('[LOGISTICS] Placeholder-looking AWB returned by carrier', {
+          orderId: String(order._id),
+          awb,
+          note: 'Likely UAT/demo docket. Switch to live credentials + IsTesting=0 for production AWBs.',
+        });
+      }
       order.logistics.awb = awb;
       order.logistics.carrierOrderNumber = orderNum || '';
       order.logistics.bookingStatus = 'booked';
@@ -132,15 +158,25 @@ export const adminCancelShipment = async (req, res) => {
   if (!awb) return res.status(400).json({ message: 'awb is required' });
   try {
     const { status, data } = await cancelOrder(awb, reason);
+    const order = await Order.findOne({ 'logistics.awb': String(awb) });
     if (status >= 200 && status < 300) {
-      const order = await Order.findOne({ 'logistics.awb': String(awb) });
       if (order) {
         order.logistics.bookingStatus = 'cancelled';
         order.logistics.lastError = '';
+        // UI/ops expects cancelled shipment to no longer present as active AWB.
+        order.logistics.awb = '';
+        order.logistics.carrierOrderNumber = '';
         await order.save();
       }
+      return res.json({ ok: true, status, data });
     }
-    return res.json({ ok: status >= 200 && status < 300, status, data });
+    if (order) {
+      order.logistics.lastError = String(
+        data?.Message || data?.message || data?.Error || `Cancel failed with status ${status}`
+      ).slice(0, 500);
+      await order.save();
+    }
+    return res.status(502).json({ ok: false, status, data, message: 'Carrier rejected cancellation' });
   } catch (e) {
     return res.status(502).json({ message: e.message || 'Cancel failed' });
   }
@@ -169,6 +205,32 @@ export const adminStickerSizes = async (req, res) => {
     return res.status(status >= 200 && status < 300 ? 200 : 502).json({ status, data });
   } catch (e) {
     return res.status(502).json({ message: e.message || 'GetStickerSize failed' });
+  }
+};
+
+export const adminCarrierMeta = async (req, res) => {
+  if (!isLogisticsConfigured()) {
+    return res.status(503).json({ message: 'Logistics API is not configured' });
+  }
+  try {
+    const [mode, product, sticker, country, kyc, branch] = await Promise.all([
+      getModeList(),
+      getProductList(),
+      getStickerSize(req.query.syncDateTime),
+      getCountryList(),
+      getKycList(),
+      getBranchTracking(),
+    ]);
+    return res.json({
+      mode,
+      product,
+      sticker,
+      country,
+      kyc,
+      branch,
+    });
+  } catch (e) {
+    return res.status(502).json({ message: e.message || 'Carrier metadata fetch failed' });
   }
 };
 
@@ -227,5 +289,20 @@ export const getMyOrderTracking = async (req, res) => {
     return res.status(502).json({ message: 'Tracking failed', data });
   } catch (e) {
     return res.status(502).json({ message: e.message || 'Tracking failed' });
+  }
+};
+
+export const adminTrackByReference = async (req, res) => {
+  if (!isLogisticsConfigured()) {
+    return res.status(503).json({ message: 'Logistics API is not configured' });
+  }
+  const referenceNo = req.body?.referenceNo || req.query?.referenceNo;
+  const status = req.body?.status || req.query?.status || 'F';
+  if (!referenceNo) return res.status(400).json({ message: 'referenceNo required' });
+  try {
+    const { status: httpStatus, data } = await trackConsignmentByRef(referenceNo, status);
+    return res.status(httpStatus >= 200 && httpStatus < 300 ? 200 : 502).json({ status: httpStatus, data });
+  } catch (e) {
+    return res.status(502).json({ message: e.message || 'Track by reference failed' });
   }
 };

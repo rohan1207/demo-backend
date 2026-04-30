@@ -25,7 +25,6 @@ const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, 
 const defaultAllowedOrigins = [
   'https://thetrexstore.com',
   'https://www.thetrexstore.com',
-  'https://admin.thetrexstore.com',
 ];
 
 /** Set on Render, e.g. CORS_ORIGINS=https://demo-5p8y.onrender.com,https://thetrexstore.com */

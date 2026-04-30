@@ -1,5 +1,35 @@
 import axios from 'axios';
 
+function logisticsDebugEnabled() {
+  return String(process.env.LOGISTICS_DEBUG || '0') === '1';
+}
+
+function redactBookingPayload(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const out = { ...payload };
+  if (Object.prototype.hasOwnProperty.call(out, 'Password')) {
+    out.Password = '***';
+  }
+  return out;
+}
+
+function summarizeCarrierResponse(data) {
+  if (!data || typeof data !== 'object') return { rawType: typeof data };
+  const d = data.Response ?? data.response ?? data;
+  if (!d || typeof d !== 'object') {
+    return {
+      message: data.Message || data.message || '',
+      responseType: typeof d,
+    };
+  }
+  return {
+    DocketNumber: d.DocketNumber ?? d.docketNumber ?? d.AWB ?? d.Awb ?? '',
+    OrderNumber: d.OrderNumber ?? d.orderNumber ?? '',
+    Message: d.Message ?? data.Message ?? data.message ?? '',
+    ErrorCode: d.ErrorCode ?? data.ErrorCode ?? '',
+  };
+}
+
 function baseUrl() {
   const raw = (process.env.LOGISTICS_API_BASE_URL || '').trim();
   if (!raw) return '';
@@ -37,6 +67,14 @@ function client() {
 
 function isTestingBit() {
   return String(process.env.LOGISTICS_IS_TESTING || '1') === '1' ? 1 : 0;
+}
+
+async function postOrGetQuery(apiClient, path, params) {
+  let res = await apiClient.post(path, null, { params });
+  if (res.status === 405) {
+    res = await apiClient.get(path, { params });
+  }
+  return { status: res.status, data: res.data };
 }
 
 export function buildBookingPayloadFromOrder(order) {
@@ -84,7 +122,20 @@ export function buildBookingPayloadFromOrder(order) {
 
 export async function postBooking(body) {
   const c = client();
+  if (logisticsDebugEnabled()) {
+    console.info('[LOGISTICS] PostBooking request', {
+      url: `${baseUrl()}/PostBooking`,
+      isTesting: isTestingBit(),
+      body: redactBookingPayload(body),
+    });
+  }
   const res = await c.post('/PostBooking', body);
+  if (logisticsDebugEnabled()) {
+    console.info('[LOGISTICS] PostBooking response', {
+      status: res.status,
+      summary: summarizeCarrierResponse(res.data),
+    });
+  }
   return { status: res.status, data: res.data };
 }
 
@@ -116,11 +167,7 @@ export async function cancelOrder(awb, cancelReason) {
 export async function getPincodeTracking(pincode) {
   const c = client();
   const params = { Pincode: String(pincode) };
-  let res = await c.get('/GetPincodeTracking', { params });
-  if (res.status === 405) {
-    res = await c.post('/GetPincodeTracking', {}, { params });
-  }
-  return { status: res.status, data: res.data };
+  return postOrGetQuery(c, '/GetPincodeTracking', params);
 }
 
 export async function getStickerSize(syncDateTime = '01/01/2000 00:01') {
@@ -129,11 +176,7 @@ export async function getStickerSize(syncDateTime = '01/01/2000 00:01') {
     CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
     SyncDateTime: syncDateTime,
   };
-  let res = await c.get('/GetStickerSize', { params });
-  if (res.status === 405) {
-    res = await c.post('/GetStickerSize', null, { params });
-  }
-  return { status: res.status, data: res.data };
+  return postOrGetQuery(c, '/GetStickerSize', params);
 }
 
 function bufferLooksLikePdf(buf) {
@@ -286,4 +329,44 @@ export async function getStickerPrintBuffer(awb, stickerSizeName) {
   }
   const out = await resolveStickerBody(res.data, res.headers, res.status);
   return { status: out.status, data: out.data, headers: out.headers };
+}
+
+export async function getModeList() {
+  const c = client();
+  const params = { CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE };
+  return postOrGetQuery(c, '/Get_ModeList', params);
+}
+
+export async function getProductList() {
+  const c = client();
+  const params = { CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE };
+  return postOrGetQuery(c, '/Get_ProductList', params);
+}
+
+export async function getCountryList() {
+  const c = client();
+  const params = { CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE };
+  return postOrGetQuery(c, '/Get_CountryList', params);
+}
+
+export async function getKycList() {
+  const c = client();
+  const params = { CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE };
+  return postOrGetQuery(c, '/Get_KYCList', params);
+}
+
+export async function getBranchTracking() {
+  const c = client();
+  const params = { CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE };
+  return postOrGetQuery(c, '/GetBranchTracking', params);
+}
+
+export async function trackConsignmentByRef(referenceNo, statusChar = 'F') {
+  const c = client();
+  const params = {
+    CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
+    lstRefNo: String(referenceNo),
+    Status: statusChar === 'L' ? 'L' : 'F',
+  };
+  return postOrGetQuery(c, '/TrackConsignmentByRef', params);
 }
