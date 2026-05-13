@@ -13,9 +13,34 @@ function redactBookingPayload(payload) {
   return out;
 }
 
+/** Bash single-quoted string escaping: 'hello'it's' -> 'hello'\''it's' */
+function bashSingleQuoted(data) {
+  return `'${String(data).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Printable curl suitable for Catalyst support (same request as axios).
+ * Log only when DEBUG is on — includes Password and X-APPKEY.
+ */
+export function buildPostBookingVendorCurl(body) {
+  const url = `${baseUrl()}/PostBooking`;
+  const appKey = process.env.LOGISTICS_X_APP_KEY || '';
+  const payloadJson = JSON.stringify(body);
+  return `curl -v -X POST ${bashSingleQuoted(url)} \\
+  -H ${bashSingleQuoted('Content-Type: application/json')} \\
+  -H ${bashSingleQuoted(`X-APPKEY: ${appKey}`)} \\
+  --data-raw ${bashSingleQuoted(payloadJson)}`;
+}
+
 function summarizeCarrierResponse(data) {
   if (!data || typeof data !== 'object') return { rawType: typeof data };
   const d = data.Response ?? data.response ?? data;
+  if (typeof d === 'string') {
+    return {
+      message: d.trim(),
+      responseType: 'string',
+    };
+  }
   if (!d || typeof d !== 'object') {
     return {
       message: data.Message || data.message || '',
@@ -88,34 +113,39 @@ export function buildBookingPayloadFromOrder(order) {
   const yyyy = now.getFullYear();
   const HH = String(now.getHours()).padStart(2, '0');
   const Min = String(now.getMinutes()).padStart(2, '0');
+  const Sec = String(now.getSeconds()).padStart(2, '0');
 
   const consigneeParts = [addr.line1, addr.city, addr.state].filter(Boolean);
   const consigneeAddress = consigneeParts.join(', ').slice(0, 300);
 
+  const add2 = (process.env.LOGISTICS_CONSIGNOR_ADDRESS2 || '').slice(0, 100);
+  // OBN Express / Click2Pick: dd-MM-yyyy date, 24h time with seconds; ConsigneePincode per Customer API PDF.
   return {
     AgentCode: process.env.LOGISTICS_AGENT_CODE,
     CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
     Password: process.env.LOGISTICS_PASSWORD,
-    BookingDate: `${dd}/${mm}/${yyyy}`,
-    BookingTime: `${HH}:${Min}`,
+    BookingDate: `${dd}-${mm}-${yyyy}`,
+    BookingTime: `${HH}:${Min}:${Sec}`,
     Pcs: pcs,
     Weight: weight,
     CODAmount: 0,
     TopayAmount: 0,
     ModeName: process.env.LOGISTICS_DEFAULT_MODE_NAME || 'STANDARD',
     ProductName: process.env.LOGISTICS_DEFAULT_PRODUCT_NAME || 'PARCEL',
-    BookType: 'P',
+    BookType: process.env.LOGISTICS_BOOK_TYPE || 'P',
     ReferenceNo: String(order._id),
     ConsignorPincode: process.env.LOGISTICS_CONSIGNOR_PINCODE || '',
     ConsignorName: process.env.LOGISTICS_CONSIGNOR_NAME || 'Shipper',
     ConsignorAddress1: (process.env.LOGISTICS_CONSIGNOR_ADDRESS1 || '').slice(0, 100),
-    ConsignorAddress2: (process.env.LOGISTICS_CONSIGNOR_ADDRESS2 || '').slice(0, 100),
+    ConsignorAddress2: add2 || null,
     ConsigneeName: (addr.fullName || 'Customer').slice(0, 100),
     ConsigneeAddress: consigneeAddress || (addr.line1 || 'Address').slice(0, 300),
     ConsigneePincode: addr.postalCode || '',
     ConsigneePhone: addr.phone || '',
     Remarks: `Order ${order._id}`,
     DocketNumber: '',
+    lstVolumetric_Size: null,
+    lstPickupItemList: null,
     IsTesting: isTestingBit(),
   };
 }
@@ -128,6 +158,8 @@ export async function postBooking(body) {
       isTesting: isTestingBit(),
       body: redactBookingPayload(body),
     });
+    console.info('[LOGISTICS] PostBooking JSON for Catalyst (keep private):\n%s', JSON.stringify(body, null, 2));
+    console.info('[LOGISTICS] PostBooking CURL for Catalyst (bash; keep private):\n%s', buildPostBookingVendorCurl(body));
   }
   const res = await c.post('/PostBooking', body);
   if (logisticsDebugEnabled()) {
@@ -141,9 +173,11 @@ export async function postBooking(body) {
 
 export async function trackConsignment(awb, statusChar = 'F') {
   const c = client();
+  const cc = process.env.LOGISTICS_CUSTOMER_CODE;
   const res = await c.get('/TrackConsignment', {
     params: {
-      CustomerCode: process.env.LOGISTICS_CUSTOMER_CODE,
+      CustomerCode: cc,
+      customerCode: cc,
       lstAWB: String(awb),
       Status: statusChar === 'L' ? 'L' : 'F',
     },

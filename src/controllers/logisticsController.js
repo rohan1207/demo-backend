@@ -44,6 +44,34 @@ function looksLikePlaceholderAwb(awb) {
   return /^1000{5,}$/.test(s) || /^0+$/.test(s);
 }
 
+function extractCarrierError(data) {
+  if (!data) return { message: '', code: '' };
+  if (typeof data === 'string') return { message: data, code: '' };
+  const d = data.Response ?? data.response ?? data;
+  if (typeof d === 'string') {
+    return { message: d.trim(), code: '' };
+  }
+  const message = String(
+    d?.Message ??
+      d?.message ??
+      data.Message ??
+      data.message ??
+      d?.ResponseStatus?.Message ??
+      data.ResponseStatus?.Message ??
+      d?.Error ??
+      data.Error ??
+      ''
+  ).trim();
+  const code = String(
+    d?.ErrorCode ??
+      data.ErrorCode ??
+      d?.ResponseStatus?.ErrorCode ??
+      data.ResponseStatus?.ErrorCode ??
+      ''
+  ).trim();
+  return { message, code };
+}
+
 export const logisticsStatus = async (req, res) => {
   res.json({
     configured: isLogisticsConfigured(),
@@ -107,15 +135,49 @@ export const adminBookOrder = async (req, res) => {
       });
     }
 
+    if (status >= 200 && status < 300) {
+      console.warn('[LOGISTICS] Booking HTTP success but no AWB in response', {
+        orderId: String(order._id),
+        carrierHttpStatus: status,
+        responseType: typeof data,
+        responsePreview:
+          typeof data === 'string'
+            ? data.slice(0, 500)
+            : JSON.stringify(data || {}).slice(0, 500),
+      });
+    } else {
+      console.warn('[LOGISTICS] Booking rejected by carrier HTTP', {
+        orderId: String(order._id),
+        carrierHttpStatus: status,
+        responseType: typeof data,
+        responsePreview:
+          typeof data === 'string'
+            ? data.slice(0, 500)
+            : JSON.stringify(data || {}).slice(0, 500),
+      });
+    }
+
+    const carrierError = extractCarrierError(data);
     const errMsg =
+      carrierError.message ||
+      carrierError.code ||
       (data && (data.Message || data.message || data.Error || JSON.stringify(data))) ||
       `HTTP ${status}`;
     order.logistics.bookingStatus = 'failed';
     order.logistics.lastError = String(errMsg).slice(0, 500);
     await order.save();
-    return res.status(502).json({
+    const apiKeyHint =
+      status === 403 ||
+      /bad api key/i.test(String(errMsg)) ||
+      /bad api key/i.test(typeof data === 'string' ? data : '')
+        ? ' Confirm X-APPKEY for this host: demo PDF keys often work only on dev.CatalystSoft.in; live erp.obnexpress.com usually needs a separate app key from Catalyst.'
+        : '';
+    // 422 = carrier answered but did not create a booking (wrong key, agent, product, etc.)
+    // 502 in catch = our server could not reach carrier (network/timeout)
+    return res.status(422).json({
       ok: false,
-      message: 'Carrier rejected booking',
+      message: `${carrierError.message || (carrierError.code ? `Carrier rejected booking (${carrierError.code})` : 'Carrier rejected booking')}${apiKeyHint}`,
+      carrierErrorCode: carrierError.code || undefined,
       detail: data,
       status,
     });
