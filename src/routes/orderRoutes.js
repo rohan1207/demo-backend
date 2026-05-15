@@ -20,8 +20,9 @@ import { adminOnly, protect } from '../middleware/auth.js';
 const router = express.Router();
 const upload = multer();
 
+/** Publishable Key ID — must match `RAZORPAY_KEY_ID` used to create orders (no login required). */
+router.get('/razorpay/public-key', getRazorpayPublicKeyId);
 router.post('/razorpay/create-order', protect, createRazorpayOrder);
-router.get('/razorpay/public-key', protect, getRazorpayPublicKeyId);
 router.post('/razorpay/verify', protect, verifyRazorpayPayment);
 router.post('/', protect, createOrder);
 router.get('/my', protect, getMyOrders);
