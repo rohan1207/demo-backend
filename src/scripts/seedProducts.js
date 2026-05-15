@@ -1,8 +1,8 @@
 import Product from '../models/Product.js';
 
-/** Same paths as Vite `public/` — main + gallery PNGs per product */
-const SAGE_IMAGES = ['/product2.png', '/product2.png', '/product2.png', '/product2.png'];
-const PINK_IMAGES = ['/product1.png', '/product1.png', '/product1.png', '/product1.png'];
+/** Same paths as Vite `public/` — hero + gallery PNGs per product */
+const SAGE_GALLERY = ['/product2.png', '/product2.png', '/product2.png'];
+const PINK_GALLERY = ['/product1.png', '/product1.png', '/product1.png'];
 
 export const seedProducts = async () => {
   const sage = {
@@ -22,7 +22,8 @@ export const seedProducts = async () => {
       'Stable grip base',
       'Leak-resistant carry design',
     ],
-    images: SAGE_IMAGES,
+    heroImage: '/product2.png',
+    galleryImages: SAGE_GALLERY,
     colors: ['Sage Green'],
     isActive: true,
   };
@@ -44,7 +45,8 @@ export const seedProducts = async () => {
       'Noise-reducing base',
       'Premium stainless steel body',
     ],
-    images: PINK_IMAGES,
+    heroImage: '/product1.png',
+    galleryImages: PINK_GALLERY,
     colors: ['Blush Pink'],
     isActive: true,
   };

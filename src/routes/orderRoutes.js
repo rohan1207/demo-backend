@@ -7,6 +7,7 @@ import {
   createOrder,
   createReturnRequest,
   createRazorpayOrder,
+  getRazorpayPublicKeyId,
   getMyReturnRequests,
   getMyOrders,
   uploadReturnImage,
@@ -20,6 +21,7 @@ const router = express.Router();
 const upload = multer();
 
 router.post('/razorpay/create-order', protect, createRazorpayOrder);
+router.get('/razorpay/public-key', protect, getRazorpayPublicKeyId);
 router.post('/razorpay/verify', protect, verifyRazorpayPayment);
 router.post('/', protect, createOrder);
 router.get('/my', protect, getMyOrders);

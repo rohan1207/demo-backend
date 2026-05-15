@@ -3,7 +3,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import app from './app.js';
 import { connectDB } from './config/db.js';
+import Product from './models/Product.js';
 import { seedAdmin } from './scripts/seedAdmin.js';
+import { seedProducts } from './scripts/seedProducts.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +35,10 @@ const listenWithFallback = (port) =>
 const start = async () => {
   await connectDB();
   await seedAdmin();
+  const productCount = await Product.countDocuments();
+  if (productCount === 0) {
+    await seedProducts();
+  }
   await listenWithFallback(INITIAL_PORT);
 };
 

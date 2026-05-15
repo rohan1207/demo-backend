@@ -9,6 +9,15 @@ import crypto from 'crypto';
 
 const ORDER_STATUSES = ['Placed', 'Confirmed', 'Packed', 'Shipped', 'Delivered', 'Cancelled'];
 
+/** Public key id must match the account used to create orders — avoids live/test mismatch with frontend env. */
+export const getRazorpayPublicKeyId = (req, res) => {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  if (!keyId) {
+    return res.status(503).json({ message: 'Razorpay is not configured on server' });
+  }
+  res.json({ keyId });
+};
+
 export const createRazorpayOrder = async (req, res) => {
   const razorpay = getRazorpayClient();
   if (!razorpay) {
